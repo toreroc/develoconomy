@@ -1,0 +1,670 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>OpenRail Tycoon — OSM Train Line Game</title>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="" />
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #071019;
+      --panel: rgba(9, 20, 32, .92);
+      --panel2: #101e2c;
+      --ink: #edf7ff;
+      --muted: #94a9b9;
+      --line: rgba(255,255,255,.12);
+      --accent: #42d6a4;
+      --warn: #ffcf5a;
+      --bad: #ff6c81;
+      --red: #ff4d5e;
+      --blue: #6bb8ff;
+      --purple: #b98cff;
+      --shadow: 0 18px 60px rgba(0,0,0,.38);
+    }
+    * { box-sizing: border-box; }
+    body { margin: 0; overflow: hidden; background: var(--bg); color: var(--ink); font: 14px/1.35 system-ui, -apple-system, Segoe UI, Roboto, Ubuntu, sans-serif; }
+    #app { height: 100dvh; display: grid; grid-template-columns: minmax(330px, 420px) 1fr; }
+    aside {
+      z-index: 500; background: linear-gradient(180deg, #071019 0%, #0d1723 100%);
+      box-shadow: var(--shadow); border-right: 1px solid var(--line);
+      display: flex; flex-direction: column; min-height: 0; padding: 14px; gap: 10px;
+    }
+    #map { height: 100%; }
+
+    h1 { margin: 0; font-size: 18px; letter-spacing: .3px; }
+    h1 small { color: var(--muted); font-weight: 400; font-size: 12px; display: block; margin-top: 2px; }
+    .money-row { display: flex; align-items: baseline; gap: 10px; }
+    #money { font-size: 22px; font-weight: 700; color: var(--accent); }
+    #income { color: var(--muted); font-size: 12px; }
+
+    .stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; }
+    .stat { background: var(--panel2); border: 1px solid var(--line); border-radius: 10px; padding: 8px; text-align: center; }
+    .stat b { display: block; font-size: 15px; }
+    .stat span { color: var(--muted); font-size: 10.5px; text-transform: uppercase; letter-spacing: .5px; }
+    .stat.routes b { color: var(--accent); }
+    .stat.demand b { color: var(--purple); }
+
+    .toolbar { display: flex; gap: 8px; }
+    button {
+      font: inherit; color: var(--ink); background: var(--panel2); border: 1px solid var(--line);
+      border-radius: 9px; padding: 7px 10px; cursor: pointer;
+    }
+    button:hover:not(:disabled) { border-color: var(--accent); }
+    button:disabled { opacity: .45; cursor: not-allowed; }
+    button.buy { background: rgba(66,214,164,.14); border-color: rgba(66,214,164,.5); color: var(--accent); font-weight: 600; }
+    button.small { padding: 3px 8px; font-size: 12px; border-radius: 7px; }
+
+    .panel { background: var(--panel2); border: 1px solid var(--line); border-radius: 12px; padding: 10px; }
+    .panel h2 { margin: 0 0 6px; font-size: 12px; color: var(--muted); text-transform: uppercase; letter-spacing: .6px; }
+
+    #selected .none { color: var(--muted); font-size: 13px; }
+    #selected .line-name { font-weight: 700; font-size: 15px; }
+    #selected .line-meta { color: var(--muted); font-size: 12px; margin: 2px 0 8px; }
+    .train-row {
+      display: flex; justify-content: space-between; align-items: center; gap: 8px;
+      padding: 6px 8px; margin-top: 5px; background: rgba(255,255,255,.04);
+      border: 1px solid var(--line); border-radius: 8px; font-size: 12.5px;
+    }
+    .train-row .carts { color: var(--blue); }
+
+    #routeList { flex: 1; min-height: 90px; overflow-y: auto; display: flex; flex-direction: column; gap: 5px; }
+    .route-item {
+      display: flex; justify-content: space-between; align-items: center; gap: 8px;
+      background: var(--panel2); border: 1px solid var(--line); border-radius: 9px;
+      padding: 7px 9px; cursor: pointer; font-size: 12.5px;
+    }
+    .route-item:hover { border-color: var(--blue); }
+    .route-item.sel { border-color: var(--accent); }
+    .route-item .ref { font-weight: 700; }
+    .route-item .km { color: var(--muted); }
+    .route-item .status.owned { color: var(--accent); font-weight: 600; }
+    .route-item .status.price { color: var(--red); }
+
+    .legend { display: flex; gap: 14px; font-size: 11.5px; color: var(--muted); }
+    .legend i { display: inline-block; width: 16px; height: 3px; border-radius: 2px; vertical-align: middle; margin-right: 5px; }
+    .legend .own i { background: var(--accent); }
+    .legend .avail i { background: var(--red); }
+    .legend .city i { width: 9px; height: 9px; border-radius: 50%; background: var(--warn); }
+
+    #history { max-height: 170px; overflow-y: auto; font-size: 12px; }
+    #history .entry { padding: 3px 0; border-bottom: 1px dashed rgba(255,255,255,.07); color: var(--ink); }
+    #history .entry time { color: var(--muted); font-variant-numeric: tabular-nums; margin-right: 7px; }
+    #history .entry.good { color: var(--accent); }
+    #history .entry.warn { color: var(--warn); }
+
+    /* Full-page blocking overlay shown while OSM data updates run */
+    #updateOverlay {
+      position: fixed; inset: 0; z-index: 10000; display: none;
+      align-items: center; justify-content: center; flex-direction: column; gap: 16px;
+      background: rgba(4, 10, 17, .88); backdrop-filter: blur(4px);
+    }
+    #updateOverlay.show { display: flex; }
+    #updateOverlay .spinner {
+      width: 46px; height: 46px; border-radius: 50%;
+      border: 4px solid rgba(255,255,255,.15); border-top-color: var(--accent);
+      animation: spin 0.9s linear infinite;
+    }
+    #updateOverlay .msg { font-size: 15px; color: var(--ink); }
+    #updateOverlay .sub { font-size: 12px; color: var(--muted); }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    @media (max-width: 800px) {
+      #app { grid-template-columns: 1fr; grid-template-rows: 45% 55%; }
+      aside { border-right: 0; border-bottom: 1px solid var(--line); }
+    }
+  </style>
+</head>
+<body>
+<div id="app">
+  <aside>
+    <h1>OpenRail Tycoon <small>Buy real ICE lines from OpenStreetMap and grow your empire</small></h1>
+    <div class="money-row">
+      <span id="money">€0</span>
+      <span id="income">+€0/s</span>
+    </div>
+
+    <div class="stats">
+      <div class="stat routes"><b id="statRoutes">0 / 0</b><span>Routes bought</span></div>
+      <div class="stat"><b id="statTrains">0</b><span>Trains</span></div>
+      <div class="stat"><b id="statCarts">0</b><span>Carts</span></div>
+      <div class="stat demand"><b id="statDemand">×1.00</b><span>Demand</span></div>
+    </div>
+
+    <div class="toolbar">
+      <button id="btnUpdate">⟳ Update OSM data</button>
+      <button id="btnReset" title="Wipe save and start over">Reset game</button>
+    </div>
+
+    <div class="panel" id="selected"><h2>Selected line</h2><div class="none">Click a line on the map or in the list below.</div></div>
+
+    <div class="panel" style="display:flex;flex-direction:column;min-height:0;flex:1;">
+      <h2>ICE lines (<span id="lineCount">0</span>)</h2>
+      <div id="routeList"></div>
+    </div>
+
+    <div class="legend">
+      <span class="own"><i></i>Owned</span>
+      <span class="avail"><i></i>Available (buy me)</span>
+      <span class="city"><i></i>City (grows ×20)</span>
+    </div>
+
+    <div class="panel">
+      <h2>History</h2>
+      <div id="history"></div>
+    </div>
+  </aside>
+  <div id="map"></div>
+</div>
+
+<div id="updateOverlay">
+  <div class="spinner"></div>
+  <div class="msg" id="overlayMsg">Updating rail network from OpenStreetMap…</div>
+  <div class="sub">The game is paused for input while data refreshes. It will resume automatically.</div>
+</div>
+
+<script>
+'use strict';
+
+/* ============================== Config ============================== */
+const STATE_KEY = 'openrail_state_v2';
+const DATA_KEY  = 'openrail_osm_v2';
+const DATA_MAX_AGE_MS   = 24 * 60 * 60 * 1000;  // refetch OSM data after a day
+const AUTO_UPDATE_MS    = 30 * 60 * 1000;       // scheduled in-session refresh
+const START_MONEY       = 25_000_000;
+
+const ROUTE_PRICE_PER_KM = 15_000;   // € per km of track
+const ROUTE_PRICE_MIN    = 500_000;
+const TRAIN_BASE_PRICE   = 500_000;  // 2nd train 5M? no: next price = base * 10^(trains-1)
+const CART_BASE_PRICE    = 100_000;
+const PRICE_FACTOR       = 10;       // every repeat purchase costs 10x the previous one
+
+const PAX_PER_CART = 60;
+const FARE_PER_KM  = 0.02;           // € per passenger-km, per tick
+
+const CITY_GROWTH_BASE = 0.0001;     // 0.01% per second…
+const CITY_GROWTH_MULT = 20;         // …boosted 20x as requested
+
+const OVERPASS_MIRRORS = [
+  'https://overpass-api.de/api/interpreter',
+  'https://overpass.kumi.systems/api/interpreter',
+];
+// All ICE train route relations, roughly bounded to the D-A-CH + Benelux area.
+// Full track geometry is ~57 MB, so we fetch each route's member list plus the
+// coordinates of its stop nodes and draw the line station-to-station instead.
+const OVERPASS_QUERY = `[out:json][timeout:120];
+relation["route"="train"]["ref"~"ICE"](46.0,3.0,56.0,16.5)->.r;
+.r out body;
+node(r.r)(46.0,3.0,56.0,16.5);
+out skel;`;
+
+/* Major ICE cities: [name, lat, lng, population]. They grow every tick. */
+const CITY_SEED = [
+  ['Berlin', 52.5200, 13.4050, 3769000], ['Hamburg', 53.5511, 9.9937, 1841000],
+  ['München', 48.1351, 11.5820, 1472000], ['Köln', 50.9375, 6.9603, 1086000],
+  ['Frankfurt am Main', 50.1109, 8.6821, 753000], ['Stuttgart', 48.7758, 9.1829, 634000],
+  ['Düsseldorf', 51.2277, 6.7735, 619000], ['Leipzig', 51.3397, 12.3731, 587000],
+  ['Dortmund', 51.5136, 7.4653, 588000], ['Essen', 51.4556, 7.0116, 583000],
+  ['Bremen', 53.0793, 8.8017, 569000], ['Dresden', 51.0504, 13.7373, 554000],
+  ['Hannover', 52.3759, 9.7320, 538000], ['Nürnberg', 49.4521, 11.0767, 518000],
+  ['Duisburg', 51.4344, 6.7623, 498000], ['Bochum', 51.4818, 7.2162, 365000],
+  ['Wuppertal', 51.2562, 7.1508, 355000], ['Bielefeld', 52.0302, 8.5325, 334000],
+  ['Bonn', 50.7374, 7.0982, 327000], ['Münster', 51.9607, 7.6261, 315000],
+  ['Karlsruhe', 49.0069, 8.4037, 313000], ['Mannheim', 49.4875, 8.4660, 309000],
+  ['Augsburg', 48.3705, 10.8978, 296000], ['Wiesbaden', 50.0782, 8.2398, 278000],
+  ['Kassel', 51.3127, 9.4797, 201000], ['Erfurt', 50.9848, 11.0299, 214000],
+  ['Würzburg', 49.7913, 9.9534, 127000], ['Göttingen', 51.5413, 9.9158, 118000],
+  ['Fulda', 50.5558, 9.6808, 68000], ['Basel', 47.5596, 7.5886, 178000],
+  ['Wien', 48.2082, 16.3738, 1897000], ['Zürich', 47.3769, 8.5417, 434000],
+  ['Amsterdam', 52.3676, 4.9041, 872000], ['Bruxelles', 50.8503, 4.3517, 1218000],
+  ['Paris (Est)', 48.8566, 2.3522, 2161000], ['Interlaken', 46.6863, 7.8632, 5700],
+];
+
+/* Fallback lines so the game still works when Overpass is unreachable. */
+const FALLBACK_LINES = [
+  { ref: 'ICE 25', name: 'ICE 25 Hamburg – München (fallback)',
+    paths: [[[53.5511,9.9937],[52.3759,9.7320],[51.3127,9.4797],[50.5558,9.6808],[49.7913,9.9534],[49.4521,11.0767],[48.3705,10.8978],[48.1351,11.5820]]] },
+  { ref: 'ICE 11', name: 'ICE 11 Berlin – München (fallback)',
+    paths: [[[52.5200,13.4050],[51.3397,12.3731],[50.9848,11.0299],[49.4521,11.0767],[48.1351,11.5820]]] },
+  { ref: 'ICE 78', name: 'ICE 78 Amsterdam – Frankfurt (fallback)',
+    paths: [[[52.3676,4.9041],[51.2277,6.7735],[50.9375,6.9603],[50.1109,8.6821]]] },
+];
+
+/* ============================== State ============================== */
+let map, tileLayer;
+let lines = [];               // [{ref, name, km, paths, price, layer}]
+let cities = [];              // [{name, lat, lng, pop, pop0, marker}]
+let state = null;             // persistent save
+let selectedRef = null;
+let updating = false;
+
+/* ============================== Utils ============================== */
+const $ = id => document.getElementById(id);
+
+function fmtMoney(v) {
+  const abs = Math.abs(v);
+  if (abs >= 1e12) return '€' + (v / 1e12).toFixed(2) + 'T';
+  if (abs >= 1e9)  return '€' + (v / 1e9).toFixed(2) + 'B';
+  if (abs >= 1e6)  return '€' + (v / 1e6).toFixed(2) + 'M';
+  if (abs >= 1e3)  return '€' + (v / 1e3).toFixed(1) + 'k';
+  return '€' + Math.round(v);
+}
+function fmtInt(v) { return Math.round(v).toLocaleString('en-US'); }
+function esc(s) { const d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
+
+function haversineKm(a, b) {
+  const R = 6371, toRad = d => d * Math.PI / 180;
+  const dLat = toRad(b[0] - a[0]), dLng = toRad(b[1] - a[1]);
+  const h = Math.sin(dLat / 2) ** 2 +
+    Math.cos(toRad(a[0])) * Math.cos(toRad(b[0])) * Math.sin(dLng / 2) ** 2;
+  return 2 * R * Math.asin(Math.sqrt(h));
+}
+function pathKm(path) {
+  let km = 0;
+  for (let i = 1; i < path.length; i++) km += haversineKm(path[i - 1], path[i]);
+  return km;
+}
+/* History log — every entry carries a timestamp. */
+function log(msg, cls = '') {
+  const box = $('history');
+  const e = document.createElement('div');
+  e.className = 'entry' + (cls ? ' ' + cls : '');
+  const now = new Date();
+  e.innerHTML = `<time>${now.toLocaleTimeString('de-DE')}</time>${esc(msg)}`;
+  box.prepend(e);
+  while (box.children.length > 120) box.lastChild.remove();
+}
+
+/* ============================== Persistence ============================== */
+function defaultState() {
+  return {
+    money: START_MONEY,
+    owned: {},          // ref -> { trains: [cartCount, ...] }
+    cityPops: {},       // name -> current population
+    basePopTotal: CITY_SEED.reduce((s, c) => s + c[3], 0),
+  };
+}
+function save() {
+  try { localStorage.setItem(STATE_KEY, JSON.stringify(state)); } catch (_) {}
+}
+function load() {
+  try {
+    const raw = localStorage.getItem(STATE_KEY);
+    if (raw) { state = Object.assign(defaultState(), JSON.parse(raw)); return; }
+  } catch (_) {}
+  state = defaultState();
+}
+
+/* ============================== Pricing & income ============================== */
+function routePrice(line) {
+  return Math.max(ROUTE_PRICE_MIN, Math.round(line.km * ROUTE_PRICE_PER_KM));
+}
+function nextTrainPrice(ref) {
+  const trains = state.owned[ref] ? state.owned[ref].trains.length : 0;
+  return TRAIN_BASE_PRICE * Math.pow(PRICE_FACTOR, Math.max(0, trains - 1));
+}
+function nextCartPrice(ref, trainIdx) {
+  const carts = state.owned[ref].trains[trainIdx];
+  return CART_BASE_PRICE * Math.pow(PRICE_FACTOR, carts - 1);
+}
+function demandMult() {
+  const total = cities.reduce((s, c) => s + c.pop, 0);
+  return total / state.basePopTotal;
+}
+function lineIncomePerSec(line) {
+  const own = state.owned[line.ref];
+  if (!own) return 0;
+  const carts = own.trains.reduce((s, c) => s + c, 0);
+  return carts * PAX_PER_CART * line.km * FARE_PER_KM * demandMult();
+}
+function totalIncomePerSec() {
+  return lines.reduce((s, l) => s + lineIncomePerSec(l), 0);
+}
+
+/* ============================== OSM data ============================== */
+async function fetchOverpass() {
+  let lastErr = null;
+  for (const url of OVERPASS_MIRRORS) {
+    try {
+      const ctrl = new AbortController();
+      const t = setTimeout(() => ctrl.abort(), 130_000);
+      const res = await fetch(url, {
+        method: 'POST',
+        body: 'data=' + encodeURIComponent(OVERPASS_QUERY),
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        signal: ctrl.signal,
+      });
+      clearTimeout(t);
+      if (!res.ok) throw new Error('HTTP ' + res.status);
+      return await res.json();
+    } catch (e) { lastErr = e; }
+  }
+  throw lastErr || new Error('all Overpass mirrors failed');
+}
+
+/* Group route relations by their ICE line number (ref) into playable lines.
+   Each relation's path is its ordered stop nodes; a ref's variants (outbound,
+   return, branches) are all drawn, and the longest variant sets the line's km. */
+function buildLines(overpassJson) {
+  const nodes = new Map();
+  for (const el of overpassJson.elements || []) {
+    if (el.type === 'node') nodes.set(el.id, [el.lat, el.lon]);
+  }
+
+  const groups = new Map();
+  for (const rel of overpassJson.elements || []) {
+    if (rel.type !== 'relation' || !rel.tags) continue;
+    const ref = (rel.tags.ref || rel.tags.name || '').trim();
+    if (!/ICE/i.test(ref + ' ' + (rel.tags.name || ''))) continue;
+
+    const stops = [];
+    for (const m of rel.members || []) {
+      if (m.type !== 'node' || !nodes.has(m.ref)) continue;
+      const p = nodes.get(m.ref);
+      const last = stops[stops.length - 1];
+      if (!last || last[0] !== p[0] || last[1] !== p[1]) stops.push(p);
+    }
+    if (stops.length < 2) continue;
+
+    const key = ref || ('rel/' + rel.id);
+    if (!groups.has(key)) groups.set(key, { ref: key, name: rel.tags.name || key, paths: [], relKms: [] });
+    const g = groups.get(key);
+    if (rel.tags.name && rel.tags.name.length > g.name.length) g.name = rel.tags.name;
+    g.paths.push(stops);
+    g.relKms.push(pathKm(stops));
+  }
+
+  const out = [];
+  for (const g of groups.values()) {
+    const km = Math.max(...g.relKms);
+    if (km < 5) continue;
+    out.push({ ref: g.ref, name: g.name, km: Math.round(km), paths: g.paths });
+  }
+  out.sort((a, b) => a.ref.localeCompare(b.ref, undefined, { numeric: true }));
+  return out;
+}
+
+function fallbackLines() {
+  return FALLBACK_LINES.map(l => ({
+    ref: l.ref, name: l.name, paths: l.paths,
+    km: Math.round(l.paths.reduce((s, p) => s + pathKm(p), 0)),
+  }));
+}
+
+function loadCachedData() {
+  try {
+    const raw = localStorage.getItem(DATA_KEY);
+    if (!raw) return null;
+    const data = JSON.parse(raw);
+    if (!data.lines || !data.lines.length) return null;
+    return data;
+  } catch (_) { return null; }
+}
+function cacheData(newLines) {
+  try {
+    localStorage.setItem(DATA_KEY, JSON.stringify({ fetchedAt: Date.now(), lines: newLines }));
+  } catch (_) { /* quota exceeded — live without a cache */ }
+}
+
+/* ============================== Update flow (blocking) ============================== */
+function setOverlay(on, msg) {
+  if (msg) $('overlayMsg').textContent = msg;
+  $('updateOverlay').classList.toggle('show', on);
+}
+
+async function runUpdate(reason) {
+  if (updating) return;
+  updating = true;
+  setOverlay(true, 'Updating rail network from OpenStreetMap…');
+  log(`Update started (${reason}) — page blocked while refreshing`, 'warn');
+  try {
+    const json = await fetchOverpass();
+    const newLines = buildLines(json);
+    if (!newLines.length) throw new Error('Overpass returned no ICE routes');
+    cacheData(newLines);
+    applyLines(newLines);
+    log(`Update finished — ${newLines.length} ICE lines loaded from OSM`, 'good');
+  } catch (e) {
+    log('Update failed: ' + e.message + (lines.length ? ' — keeping current data' : ''), 'warn');
+    if (!lines.length) {
+      applyLines(loadCachedData()?.lines || fallbackLines());
+      log('Using ' + (loadCachedData() ? 'cached' : 'built-in fallback') + ' line data', 'warn');
+    }
+  } finally {
+    updating = false;
+    setOverlay(false);
+    renderAll();
+  }
+}
+
+/* ============================== Map & rendering ============================== */
+function initMap() {
+  map = L.map('map', { zoomControl: true }).setView([51.2, 10.3], 6);
+  tileLayer = L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+    maxZoom: 18,
+    attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> &copy; <a href="https://carto.com/">CARTO</a>',
+  }).addTo(map);
+
+  cities = CITY_SEED.map(([name, lat, lng, pop0]) => {
+    const pop = state.cityPops[name] || pop0;
+    const marker = L.circleMarker([lat, lng], cityStyle(pop)).addTo(map);
+    marker.bindTooltip(() => `<b>${esc(name)}</b><br>${fmtInt(cityRef(name).pop)} inhabitants`, { sticky: true });
+    const c = { name, lat, lng, pop, pop0, marker };
+    return c;
+  });
+}
+function cityRef(name) { return cities.find(c => c.name === name); }
+function cityStyle(pop) {
+  return {
+    radius: Math.max(3, Math.min(22, Math.sqrt(pop) / 90)),
+    color: '#ffcf5a', weight: 1, fillColor: '#ffcf5a', fillOpacity: .35,
+  };
+}
+
+function lineStyle(line) {
+  return state.owned[line.ref]
+    ? { color: '#42d6a4', weight: 3.5, opacity: .95 }
+    : { color: '#ff4d5e', weight: 2, opacity: .75 };  // available routes: red
+}
+
+function applyLines(newLines) {
+  for (const l of lines) if (l.layer) map.removeLayer(l.layer);
+  lines = newLines.map(l => ({ ...l }));
+  for (const line of lines) {
+    line.layer = L.polyline(line.paths, lineStyle(line))
+      .addTo(map)
+      .on('click', () => selectLine(line.ref, false));
+    line.layer.bindTooltip(() =>
+      `<b>${esc(line.ref)}</b> · ${line.km} km<br>` +
+      (state.owned[line.ref] ? 'Owned — earning ' + fmtMoney(lineIncomePerSec(line)) + '/s'
+                             : 'Buy for ' + fmtMoney(routePrice(line))), { sticky: true });
+  }
+}
+
+function selectLine(ref, zoom = true) {
+  selectedRef = ref;
+  const line = lines.find(l => l.ref === ref);
+  if (line && zoom) map.fitBounds(line.layer.getBounds(), { padding: [30, 30] });
+  renderAll();
+}
+
+/* ============================== Actions ============================== */
+function buyRoute(ref) {
+  const line = lines.find(l => l.ref === ref);
+  if (!line || state.owned[ref]) return;
+  const price = routePrice(line);
+  if (state.money < price) return;
+  state.money -= price;
+  state.owned[ref] = { trains: [1] };  // comes with 1 train, 1 cart
+  line.layer.setStyle(lineStyle(line));
+  log(`Bought route ${ref} for ${fmtMoney(price)} (1 train, 1 cart included)`, 'good');
+  save(); renderAll();
+}
+function buyTrain(ref) {
+  const own = state.owned[ref];
+  if (!own) return;
+  const price = nextTrainPrice(ref);
+  if (state.money < price) return;
+  state.money -= price;
+  own.trains.push(1);
+  log(`Bought train #${own.trains.length} on ${ref} for ${fmtMoney(price)} — next one costs ${fmtMoney(nextTrainPrice(ref))}`, 'good');
+  save(); renderAll();
+}
+function buyCart(ref, trainIdx) {
+  const own = state.owned[ref];
+  if (!own || own.trains[trainIdx] == null) return;
+  const price = nextCartPrice(ref, trainIdx);
+  if (state.money < price) return;
+  state.money -= price;
+  own.trains[trainIdx]++;
+  log(`Added cart ${own.trains[trainIdx]} to train #${trainIdx + 1} on ${ref} for ${fmtMoney(price)}`, 'good');
+  save(); renderAll();
+}
+
+/* ============================== UI rendering ============================== */
+function renderStats() {
+  const ownedCount = Object.keys(state.owned).length;
+  let trains = 0, carts = 0;
+  for (const o of Object.values(state.owned)) {
+    trains += o.trains.length;
+    carts += o.trains.reduce((s, c) => s + c, 0);
+  }
+  $('money').textContent = fmtMoney(state.money);
+  $('income').textContent = '+' + fmtMoney(totalIncomePerSec()) + '/s';
+  $('statRoutes').textContent = `${ownedCount} / ${lines.length}`;
+  $('statTrains').textContent = trains;
+  $('statCarts').textContent = carts;
+  $('statDemand').textContent = '×' + demandMult().toFixed(2);
+}
+
+function renderSelected() {
+  const box = $('selected');
+  const line = lines.find(l => l.ref === selectedRef);
+  if (!line) {
+    box.innerHTML = '<h2>Selected line</h2><div class="none">Click a line on the map or in the list below.</div>';
+    return;
+  }
+  const own = state.owned[line.ref];
+  let html = `<h2>Selected line</h2>
+    <div class="line-name">${esc(line.ref)}</div>
+    <div class="line-meta">${esc(line.name)} · ${line.km} km` +
+    (own ? ` · earning ${fmtMoney(lineIncomePerSec(line))}/s` : '') + `</div>`;
+
+  if (!own) {
+    const price = routePrice(line);
+    html += `<button class="buy" data-act="buyRoute" ${state.money < price ? 'disabled' : ''}>
+      Buy route — ${fmtMoney(price)}</button>`;
+  } else {
+    own.trains.forEach((carts, i) => {
+      const cp = nextCartPrice(line.ref, i);
+      html += `<div class="train-row">
+        <span>🚆 Train #${i + 1} — <span class="carts">${carts} cart${carts > 1 ? 's' : ''}</span></span>
+        <button class="small buy" data-act="buyCart" data-train="${i}" ${state.money < cp ? 'disabled' : ''}>
+          + Cart ${fmtMoney(cp)}</button>
+      </div>`;
+    });
+    const tp = nextTrainPrice(line.ref);
+    html += `<div style="margin-top:8px">
+      <button class="buy" data-act="buyTrain" ${state.money < tp ? 'disabled' : ''}>
+        + Buy train — ${fmtMoney(tp)}</button></div>`;
+  }
+  box.innerHTML = html;
+  box.querySelectorAll('button[data-act]').forEach(btn => {
+    btn.onclick = () => {
+      const act = btn.dataset.act;
+      if (act === 'buyRoute') buyRoute(line.ref);
+      else if (act === 'buyTrain') buyTrain(line.ref);
+      else if (act === 'buyCart') buyCart(line.ref, Number(btn.dataset.train));
+    };
+  });
+}
+
+/* Refresh only the enabled state of buy buttons — rebuilding the panel HTML
+   every tick would swallow clicks that land mid-render. */
+function refreshAffordability() {
+  const line = lines.find(l => l.ref === selectedRef);
+  if (!line) return;
+  $('selected').querySelectorAll('button[data-act]').forEach(btn => {
+    const act = btn.dataset.act;
+    const price = act === 'buyRoute' ? routePrice(line)
+                : act === 'buyTrain' ? nextTrainPrice(line.ref)
+                : nextCartPrice(line.ref, Number(btn.dataset.train));
+    btn.disabled = state.money < price;
+  });
+}
+
+function renderList() {
+  const box = $('routeList');
+  $('lineCount').textContent = lines.length;
+  box.innerHTML = '';
+  for (const line of lines) {
+    const own = state.owned[line.ref];
+    const el = document.createElement('div');
+    el.className = 'route-item' + (line.ref === selectedRef ? ' sel' : '');
+    el.innerHTML = `<span class="ref">${esc(line.ref)}</span>
+      <span class="km">${line.km} km</span>
+      <span class="status ${own ? 'owned' : 'price'}">${
+        own ? `✓ ${own.trains.length}🚆 ${own.trains.reduce((s, c) => s + c, 0)}🛒`
+            : fmtMoney(routePrice(line))}</span>`;
+    el.onclick = () => selectLine(line.ref);
+    box.appendChild(el);
+  }
+}
+
+function renderAll() { renderStats(); renderSelected(); renderList(); }
+
+/* ============================== Game loop ============================== */
+let lastCityRedraw = 0;
+function tick() {
+  // Cities grow at 20x the base rate and drive passenger demand.
+  const g = CITY_GROWTH_BASE * CITY_GROWTH_MULT;
+  for (const c of cities) {
+    c.pop *= 1 + g;
+    state.cityPops[c.name] = c.pop;
+  }
+  state.money += totalIncomePerSec();
+
+  const now = Date.now();
+  if (now - lastCityRedraw > 10_000) {   // resize city dots occasionally
+    lastCityRedraw = now;
+    for (const c of cities) c.marker.setStyle(cityStyle(c.pop));
+  }
+  renderStats();
+  refreshAffordability();
+}
+
+/* ============================== Boot ============================== */
+async function main() {
+  load();
+  initMap();
+
+  $('btnUpdate').onclick = () => runUpdate('manual');
+  $('btnReset').onclick = () => {
+    if (!confirm('Wipe your save and start over?')) return;
+    localStorage.removeItem(STATE_KEY);
+    location.reload();
+  };
+
+  log('Welcome to OpenRail Tycoon — starting capital ' + fmtMoney(state.money));
+
+  const cached = loadCachedData();
+  if (cached) {
+    applyLines(cached.lines);
+    renderAll();
+    log(`Loaded ${cached.lines.length} ICE lines from cache (${new Date(cached.fetchedAt).toLocaleTimeString('de-DE')})`);
+    if (Date.now() - cached.fetchedAt > DATA_MAX_AGE_MS) runUpdate('cache expired');
+  } else {
+    await runUpdate('initial load');
+  }
+
+  setInterval(tick, 1000);
+  setInterval(save, 10_000);
+  setInterval(() => runUpdate('scheduled refresh'), AUTO_UPDATE_MS);
+  renderAll();
+}
+
+main();
+</script>
+</body>
+</html>
