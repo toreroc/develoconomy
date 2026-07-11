@@ -108,7 +108,21 @@
     }
     #updateOverlay .msg { font-size: 15px; color: var(--ink); }
     #updateOverlay .sub { font-size: 12px; color: var(--muted); }
+    #updateOverlay .bar {
+      width: min(420px, 70vw); height: 8px; border-radius: 6px; overflow: hidden;
+      background: rgba(255,255,255,.12);
+    }
+    #updateOverlay .bar > i {
+      display: block; height: 100%; width: 0%;
+      background: var(--accent); border-radius: 6px;
+      transition: width .25s linear;
+    }
+    #updateOverlay .bar.indeterminate > i {
+      width: 35%; animation: slide 1.2s ease-in-out infinite alternate;
+    }
+    #updateOverlay .progress-text { font-size: 12.5px; color: var(--accent); font-variant-numeric: tabular-nums; }
     @keyframes spin { to { transform: rotate(360deg); } }
+    @keyframes slide { from { margin-left: 0; } to { margin-left: 65%; } }
 
     @media (max-width: 800px) {
       #app { grid-template-columns: 1fr; grid-template-rows: 45% 55%; }
@@ -161,7 +175,9 @@
 <div id="updateOverlay">
   <div class="spinner"></div>
   <div class="msg" id="overlayMsg">Updating rail network from OpenStreetMap…</div>
-  <div class="sub">The game is paused for input while data refreshes. It will resume automatically.</div>
+  <div class="bar indeterminate" id="overlayBar"><i></i></div>
+  <div class="progress-text" id="overlayProgress">Contacting server…</div>
+  <div class="sub">The game resumes automatically when the update is done.</div>
 </div>
 
 <script>
@@ -323,21 +339,38 @@ function totalIncomePerSec() {
 }
 
 /* ============================== OSM data ============================== */
-async function fetchOverpass() {
+async function fetchOverpass(onProgress) {
   let lastErr = null;
   for (const url of OVERPASS_MIRRORS) {
     try {
       const ctrl = new AbortController();
       const t = setTimeout(() => ctrl.abort(), 130_000);
+      onProgress?.('wait', 0, 0);
       const res = await fetch(url, {
         method: 'POST',
         body: 'data=' + encodeURIComponent(OVERPASS_QUERY),
         headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
         signal: ctrl.signal,
       });
+      if (!res.ok) { clearTimeout(t); throw new Error('HTTP ' + res.status); }
+
+      // Stream the body so we can show download progress. Content-Length is
+      // often missing (chunked/gzip), in which case only bytes are reported.
+      const total = Number(res.headers.get('Content-Length')) || 0;
+      const reader = res.body?.getReader();
+      if (!reader) { clearTimeout(t); return await res.json(); }
+      const chunks = [];
+      let received = 0;
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        chunks.push(value);
+        received += value.length;
+        onProgress?.('download', received, total);
+      }
       clearTimeout(t);
-      if (!res.ok) throw new Error('HTTP ' + res.status);
-      return await res.json();
+      onProgress?.('parse', received, total);
+      return JSON.parse(await new Blob(chunks).text());
     } catch (e) { lastErr = e; }
   }
   throw lastErr || new Error('all Overpass mirrors failed');
@@ -413,13 +446,38 @@ function setOverlay(on, msg) {
   $('updateOverlay').classList.toggle('show', on);
 }
 
+function reportProgress(phase, received, total) {
+  const bar = $('overlayBar'), fill = bar.firstElementChild, text = $('overlayProgress');
+  const mb = b => (b / 1048576).toFixed(1) + ' MB';
+  if (phase === 'wait') {
+    bar.classList.add('indeterminate');
+    fill.style.width = '';
+    text.textContent = 'Contacting server…';
+  } else if (phase === 'download') {
+    if (total > 0) {
+      bar.classList.remove('indeterminate');
+      const pct = Math.min(100, received / total * 100);
+      fill.style.width = pct.toFixed(1) + '%';
+      text.textContent = `Downloading… ${mb(received)} of ${mb(total)} (${Math.round(pct)}%)`;
+    } else {
+      bar.classList.add('indeterminate');
+      text.textContent = `Downloading… ${mb(received)} received`;
+    }
+  } else if (phase === 'parse') {
+    bar.classList.remove('indeterminate');
+    fill.style.width = '100%';
+    text.textContent = `Processing ${mb(received)} of route data…`;
+  }
+}
+
 async function runUpdate(reason) {
   if (updating) return;
   updating = true;
   setOverlay(true, 'Updating rail network from OpenStreetMap…');
+  reportProgress('wait', 0, 0);
   log(`Update started (${reason}) — page blocked while refreshing`, 'warn');
   try {
-    const json = await fetchOverpass();
+    const json = await fetchOverpass(reportProgress);
     const newLines = buildLines(json);
     if (!newLines.length) throw new Error('Overpass returned no ICE routes');
     cacheData(newLines);
